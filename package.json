@@ -1,11 +1,9 @@
 {
-  "name": "crush-ray-bot",
+  "name": "crush-ray",
   "version": "2.1.1",
-  "description": "CRUSH RAY WhatsApp Bot",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "clear": "node index.js --clear"
+    "start": "node index.js"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^6.7.0",
