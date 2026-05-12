@@ -3,38 +3,155 @@ const fs = require('fs-extra');
 const path = require('path');
 const P = require('pino');
 
-// ============ CONFIGURATION ============
-const YOUR_NUMBER = '254794376595'; // CHANGE THIS TO YOUR WHATSAPP NUMBER
-const SESSION_NAME = 'crush-ray-session';
+// ============ YOUR PHONE NUMBER ============
+const YOUR_NUMBER = '254794376595'; // CHANGE THIS TO YOUR NUMBER
 
-// ============ HELPER FUNCTIONS ============
-const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+// ============ DELAY FUNCTION ============
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-// ============ MAIN BOT FUNCTION ============
+// ============ MAIN BOT ============
 async function startBot() {
     console.log('\n╔════════════════════════════════════════════╗');
     console.log('║         CRUSH RAY - WhatsApp Bot        ║');
     console.log('║              Version 2.1.1               ║');
-    console.log('║        Developed by Stanley Assanaly     ║');
     console.log('╚════════════════════════════════════════════╝\n');
     
     console.log('🚀 Starting CRUSH RAY Bot...');
     console.log('📱 Phone: +' + YOUR_NUMBER);
-    console.log('🌐 Platform: Render.com\n');
     
-    // Create session directory
-    const sessionDir = path.join(__dirname, 'sessions', SESSION_NAME);
+    // Setup session folder
+    const sessionDir = path.join(__dirname, 'sessions');
     await fs.ensureDir(sessionDir);
     
-    // Clear session if flag is passed
-    if (process.argv.includes('--clear')) {
-        console.log('🗑️ Clearing old session...');
-        await fs.remove(sessionDir);
-        await fs.ensureDir(sessionDir);
-    }
+    // Check for existing session
+    const hasSession = await fs.pathExists(path.join(sessionDir, 'creds.json'));
+    console.log('📁 Session exists: ' + (hasSession ? 'YES' : 'NO'));
     
-    // Get auth state
+    // Load auth state
     const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
+    
+    // Create connection
+    const conn = makeWASocket({
+        auth: state,
+        printQRInTerminal: true,
+        logger: P({ level: 'silent' }),
+        browser: ['CRUSH RAY', 'Chrome', '120.0.0.0'],
+        defaultQueryTimeoutMs: 60000,
+        keepAliveIntervalMs: 30000,
+        markOnlineOnConnect: true,
+        connectTimeoutMs: 60000
+    });
+    
+    conn.ev.on('creds.update', saveCreds);
+    
+    let paired = false;
+    
+    conn.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect, qr } = update;
+        
+        console.log('📡 Status:', connection || 'connecting');
+        
+        // Show QR code (fallback)
+        if (qr && !hasSession) {
+            console.log('\n📱 SCAN QR CODE WITH WHATSAPP:');
+            console.log(qr);
+            console.log('\n1. Open WhatsApp → Settings → Linked Devices');
+            console.log('2. Tap "Link a Device"');
+            console.log('3. Scan this QR code\n');
+        }
+        
+        // Try pairing code
+        if (connection === 'open' && !state.creds.registered && !paired) {
+            paired = true;
+            console.log('\n🔐 Getting pairing code...');
+            
+            await sleep(3000);
+            
+            try {
+                const cleanNumber = YOUR_NUMBER.replace(/[^0-9]/g, '');
+                const code = await conn.requestPairingCode(cleanNumber);
+                
+                console.log('\n╔════════════════════════════════════════════╗');
+                console.log('║                                        ║');
+                console.log('║     🔐 CODE: ' + code + '     ║');
+                console.log('║                                        ║');
+                console.log('╚════════════════════════════════════════════╝\n');
+                console.log('📱 Enter this code in WhatsApp:');
+                console.log('   Settings → Linked Devices → Link a Device');
+                console.log('   → Link with phone number → Enter: ' + code + '\n');
+                
+            } catch (err) {
+                console.log('❌ Pairing code error:', err.message);
+                console.log('💡 Use QR code above instead\n');
+            }
+        }
+        
+        // Handle disconnection
+        if (connection === 'close') {
+            const code = lastDisconnect?.error?.output?.statusCode || 500;
+            console.log('❌ Disconnected:', code);
+            
+            if (code !== DisconnectReason.loggedOut) {
+                console.log('🔄 Reconnecting in 10s...\n');
+                await sleep(10000);
+                startBot();
+            } else {
+                console.log('🔒 Logged out. Delete sessions folder to re-pair');
+            }
+        }
+        
+        // Connected successfully
+        if (connection === 'open' && state.creds.registered) {
+            const botNumber = conn.user.id.split(':')[0];
+            console.log('\n✅========== CONNECTED! ==========');
+            console.log('📱 Bot: ' + botNumber);
+            console.log('🟢 ONLINE');
+            console.log('===================================\n');
+            
+            // Test message
+            const ownerJid = YOUR_NUMBER + '@s.whatsapp.net';
+            await conn.sendMessage(ownerJid, { 
+                text: '✅ *CRUSH RAY ONLINE!*\n\nCommands:\n.ping - Test\n.help - Menu\n.status - Info'
+            }).catch(() => {});
+        }
+    });
+    
+    // Handle messages
+    conn.ev.on('messages.upsert', async (event) => {
+        const msg = event.messages?.[0];
+        if (!msg || msg.key.fromMe) return;
+        
+        const from = msg.key.remoteJid;
+        const body = msg.message?.conversation || 
+                    msg.message?.extendedTextMessage?.text || '';
+        
+        const cmd = body.toLowerCase().trim();
+        
+        if (cmd === '.ping') {
+            await conn.sendMessage(from, { text: '🏓 Pong! CRUSH RAY active!' });
+            console.log('🏓 Ping replied');
+        }
+        
+        if (cmd === '.help') {
+            await conn.sendMessage(from, { 
+                text: '🤖 *CRUSH RAY BOT*\n\n.ping - Check status\n.help - This menu\n.status - Bot info\n\n💪 Ready to crush!'
+            });
+        }
+        
+        if (cmd === '.status') {
+            await conn.sendMessage(from, { 
+                text: '📊 *Status*\n✅ ONLINE\n🤖 CRUSH RAY\n👑 Stanley Assanaly\n💪 Active!'
+            });
+        }
+    });
+}
+
+// Start bot
+console.log('🔄 Initializing...\n');
+startBot().catch(err => {
+    console.error('Fatal:', err.message);
+    setTimeout(startBot, 15000);
+});    const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
     
     const hasSession = await fs.pathExists(path.join(sessionDir, 'creds.json'));
     console.log('📁 Session exists: ' + (hasSession ? 'YES ✅' : 'NO ❌'));
